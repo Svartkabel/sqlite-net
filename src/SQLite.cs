@@ -545,16 +545,29 @@ namespace SQLite
 				var @using = fts3 ? "using fts3 " : fts4 ? "using fts4 " : string.Empty;
 
 				// Build query.
-				var query = "create " + @virtual + "table if not exists \"" + map.TableName + "\" " + @using + "(\n";
+				var sbQuery = new StringBuilder ("create ").Append (@virtual).Append (" table if not exists \"").Append (map.TableName).Append ("\" ").Append (@using).Append (" (\n");
 				var decls = map.Columns.Select (p => Orm.SqlDecl (p, StoreDateTimeAsTicks));
 				var decl = string.Join (",\n", decls.ToArray ());
-				query += decl;
-				query += ")";
-				if(map.WithoutRowId) {
-					query += " without rowid";
+				sbQuery.Append (decl);
+
+				//Allows for composite primary keys as proposed by softlion and OzTK in https://github.com/praeclarum/sqlite-net/issues/175 
+				var pks = (from c in map.Columns where c.IsPK select c).ToList ();
+				if (pks.Count > 1) {
+					//, PRIMARY KEY (A_ID, B_ID)
+					sbQuery.Append (", primary key (");
+					pks.Aggregate (sbQuery, (sb, c) => sb.Append (c.Name).Append (','));
+					sbQuery.Remove (sbQuery.Length - 1, 1).Append (')');
+				}
+				else {
+					sbQuery.Remove (sbQuery.Length - 2, 2);
 				}
 
-				Execute (query);
+				sbQuery.Append (")");
+				if (map.WithoutRowId) {
+					sbQuery.Append (" without rowid");
+				}
+
+				Execute (sbQuery.ToString ());
 			}
 			else {
 				result = CreateTableResult.Migrated;
@@ -812,6 +825,10 @@ namespace SQLite
 			}
 
 			foreach (var p in toBeAdded) {
+				if (p.IsPK)
+					throw new Exception ("New columns can not be primary keys (unsupported migration)");
+
+
 				var addCol = "alter table \"" + map.TableName + "\" add column " + Orm.SqlDecl (p, StoreDateTimeAsTicks);
 				Execute (addCol);
 			}
@@ -2599,22 +2616,13 @@ namespace SQLite
 
 		public static string SqlDecl (TableMapping.Column p, bool storeDateTimeAsTicks)
 		{
-			string decl = "\"" + p.Name + "\" " + SqlType (p, storeDateTimeAsTicks) + " ";
-
-			if (p.IsPK) {
-				decl += "primary key ";
-			}
-			if (p.IsAutoInc) {
-				decl += "autoincrement ";
-			}
-			if (!p.IsNullable) {
-				decl += "not null ";
-			}
-			if (!string.IsNullOrEmpty (p.Collation)) {
-				decl += "collate " + p.Collation + " ";
-			}
-
-			return decl;
+			return String.Format ("\"{0}\" {1} {2} {3} {4} ",
+				p.Name,
+				SqlType (p, storeDateTimeAsTicks),
+				p.IsAutoInc ? "autoincrement" : null,
+				!p.IsNullable ? "not null" : null,
+				!String.IsNullOrEmpty (p.Collation) ? "collate " + p.Collation : null
+			);
 		}
 
 		public static string SqlType (TableMapping.Column p, bool storeDateTimeAsTicks)
