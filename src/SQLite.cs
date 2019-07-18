@@ -1677,9 +1677,11 @@ namespace SQLite
 
 			var map = GetMapping (objType);
 
-			if (map.PK != null && map.PK.IsAutoGuid) {
-				if (map.PK.GetValue (obj).Equals (Guid.Empty)) {
-					map.PK.SetValue (obj, Guid.NewGuid ());
+			foreach (var pk in map.PK) {
+				if (pk != null && pk.IsAutoGuid) {
+					if (pk.GetValue (obj).Equals (Guid.Empty)) {
+						pk.SetValue (obj, Guid.NewGuid ());
+					}
 				}
 			}
 
@@ -1822,7 +1824,7 @@ namespace SQLite
 			}
 
 			var cols = from p in map.Columns
-					   where p != pk
+					   where !pk.Contains(p)
 					   select p;
 			var vals = from c in cols
 					   select c.GetValue (obj);
@@ -1835,9 +1837,19 @@ namespace SQLite
 					   select c.GetValue (obj);
 				ps = new List<object> (vals);
 			}
-			ps.Add (pk.GetValue (obj));
-			var q = string.Format ("update \"{0}\" set {1} where {2} = ? ", map.TableName, string.Join (",", (from c in cols
-																											  select "\"" + c.Name + "\" = ? ").ToArray ()), pk.Name);
+			foreach(var key in pk) 
+				ps.Add (key.GetValue (obj));
+			var q = string.Format ("update \"{0}\" set {1} where ", map.TableName, string.Join (",", (from c in cols
+																											  select "\"" + c.Name + "\" = ? ").ToArray ()));
+			StringBuilder sb = new StringBuilder (q);
+			foreach(var key in pk) {
+				sb.Append (key.Name);
+				sb.Append (" = ? AND ");
+			}
+
+			q = sb.ToString ();
+			if (q.Contains ("? AND"))
+				q = q.Substring (0, q.Length - 4);
 
 			try {
 				rowsAffected = Execute (q, ps.ToArray ());
@@ -1903,8 +1915,21 @@ namespace SQLite
 			if (pk == null) {
 				throw new NotSupportedException ("Cannot delete " + map.TableName + ": it has no PK");
 			}
-			var q = string.Format ("delete from \"{0}\" where \"{1}\" = ?", map.TableName, pk.Name);
-			var count = Execute (q, pk.GetValue (objectToDelete));
+
+			StringBuilder sb = new StringBuilder (string.Format ("delete from \"{0}\" where ", map.TableName));
+			var lParams = new List<object> ();
+			foreach (var col in pk) {
+				sb.Append (col.Name);
+				sb.Append (" = ? AND ");
+				lParams.Add (col.GetValue (objectToDelete));
+			}
+
+			var q = sb.ToString ();
+			if (q.Contains ("? AND"))
+				q = q.Substring (0, q.Length - 4).Trim();
+			//var q = string.Format ("delete from \"{0}\" where \"{1}\" = ?", map.TableName, pk.Name);
+
+			var count = Execute (q, lParams.ToArray());
 			if (count > 0)
 				OnTableChanged (map, NotifyTableChangedAction.Delete);
 			return count;
@@ -1913,7 +1938,7 @@ namespace SQLite
 		/// <summary>
 		/// Deletes the object with the specified primary key.
 		/// </summary>
-		/// <param name="primaryKey">
+		/// <param name="primaryKeys">
 		/// The primary key of the object to delete.
 		/// </param>
 		/// <returns>
@@ -1922,15 +1947,15 @@ namespace SQLite
 		/// <typeparam name='T'>
 		/// The type of object.
 		/// </typeparam>
-		public int Delete<T> (object primaryKey)
+		public int Delete<T> (List<object> primaryKeys)
 		{
-			return Delete (primaryKey, GetMapping (typeof (T)));
+			return Delete (primaryKeys, GetMapping (typeof (T)));
 		}
 
 		/// <summary>
 		/// Deletes the object with the specified primary key.
 		/// </summary>
-		/// <param name="primaryKey">
+		/// <param name="primaryKeys">
 		/// The primary key of the object to delete.
 		/// </param>
 		/// <param name="map">
@@ -1939,14 +1964,27 @@ namespace SQLite
 		/// <returns>
 		/// The number of objects deleted.
 		/// </returns>
-		public int Delete (object primaryKey, TableMapping map)
+		public int Delete (List<object> primaryKeys, TableMapping map)
 		{
 			var pk = map.PK;
 			if (pk == null) {
 				throw new NotSupportedException ("Cannot delete " + map.TableName + ": it has no PK");
 			}
-			var q = string.Format ("delete from \"{0}\" where \"{1}\" = ?", map.TableName, pk.Name);
-			var count = Execute (q, primaryKey);
+
+			StringBuilder sb = new StringBuilder (string.Format ("delete from \"{0}\" where ", map.TableName));
+			var lParams = new List<object> ();
+			foreach (var col in pk) {
+				sb.Append (col.Name);
+				sb.Append (" = ? AND ");
+			}
+
+			var q = sb.ToString ();
+			if (q.Contains ("? AND"))
+				q = q.Substring (0, q.Length - 4);
+
+			//var q = string.Format ("delete from \"{0}\" where \"{1}\" = ?", map.TableName, pk.Name);
+
+			var count = Execute (q, primaryKeys.ToArray());
 			if (count > 0)
 				OnTableChanged (map, NotifyTableChangedAction.Delete);
 			return count;
@@ -2360,7 +2398,7 @@ namespace SQLite
 
 		public Column[] Columns { get; private set; }
 
-		public Column PK { get; private set; }
+		public List<Column> PK { get; private set; }
 
 		public string GetByPrimaryKeySql { get; private set; }
 
@@ -2419,14 +2457,31 @@ namespace SQLite
 					_autoPk = c;
 				}
 				if (c.IsPK) {
-					PK = c;
+					if(PK == null)
+						PK = new List<Column> ();
+					PK.Add(c);
 				}
 			}
 
 			HasAutoIncPK = _autoPk != null;
 
 			if (PK != null) {
-				GetByPrimaryKeySql = string.Format ("select * from \"{0}\" where \"{1}\" = ?", TableName, PK.Name);
+				//Replace for multiple PKs
+				//GetByPrimaryKeySql = string.Format ("select * from \"{0}\" where \"{1}\" = ?", TableName, PK.Name);
+
+				StringBuilder sb = new StringBuilder (string.Format ("select * from \"{0}\" where ", TableName));
+				foreach (var col in PK) {
+					if (col.IsPK) {
+						sb.Append (col.Name);
+						sb.Append (" = ? AND");
+					}
+				}
+
+				var q = sb.ToString ();
+				if (q.Contains ("? AND"))
+					q = q.Substring (0, q.Length - 4);
+
+				GetByPrimaryKeySql = q;
 			}
 			else {
 				// People should not be calling Get/Find without a PK

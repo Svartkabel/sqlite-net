@@ -611,7 +611,7 @@ namespace SQLite
 		/// <summary>
 		/// Deletes the object with the specified primary key.
 		/// </summary>
-		/// <param name="primaryKey">
+		/// <param name="primaryKeys">
 		/// The primary key of the object to delete.
 		/// </param>
 		/// <returns>
@@ -620,15 +620,15 @@ namespace SQLite
 		/// <typeparam name='T'>
 		/// The type of object.
 		/// </typeparam>
-		public Task<int> DeleteAsync<T> (object primaryKey)
+		public Task<int> DeleteAsync<T> (List<object> primaryKeys)
 		{
-			return WriteAsync (conn => conn.Delete<T> (primaryKey));
+			return WriteAsync (conn => conn.Delete<T> (primaryKeys));
 		}
 
 		/// <summary>
 		/// Deletes the object with the specified primary key.
 		/// </summary>
-		/// <param name="primaryKey">
+		/// <param name="primaryKeys">
 		/// The primary key of the object to delete.
 		/// </param>
 		/// <param name="map">
@@ -637,9 +637,9 @@ namespace SQLite
 		/// <returns>
 		/// The number of objects deleted.
 		/// </returns>
-		public Task<int> DeleteAsync (object primaryKey, TableMapping map)
+		public Task<int> DeleteAsync (List<object> primaryKeys, TableMapping map)
 		{
-			return WriteAsync (conn => conn.Delete (primaryKey, map));
+			return WriteAsync (conn => conn.Delete (primaryKeys, map));
 		}
 
 		/// <summary>
